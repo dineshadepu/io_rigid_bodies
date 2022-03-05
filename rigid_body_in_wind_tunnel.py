@@ -219,7 +219,7 @@ class WindTunnel(Application):
             help="Reynolds number."
         )
         group.add_argument(
-            "--hdx", action="store", type=float, dest="hdx", default=1.0,
+            "--hdx", action="store", type=float, dest="hdx", default=1.2,
             help="Ratio h/dx."
         )
         group.add_argument(

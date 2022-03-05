@@ -1061,45 +1061,36 @@ class UpdateGhostProps(Equation):
 
 
 class ForceOnFluidDueToRigidBody(Equation):
-    def loop(self, d_idx, s_idx, d_rho, d_p, d_au, d_av, d_aw,
-             s_m_fsi, s_rho_fsi, s_p_fsi, DWIJ):
-        rhoi = d_rho[d_idx]
-        rhoj = s_rho_fsi[s_idx]
-        pi = d_p[d_idx]
-        pj = s_p_fsi[s_idx]
+    def loop(self, d_idx, d_m, d_rho, d_au, d_av, d_aw,  d_p,
+             s_idx, s_V, DWIJ, s_m_fsi):
 
-        pi = pi / (rhoi * rhoi)
-        pj = pj / (rhoj * rhoj)
+        psi = s_m_fsi[s_idx]
 
-        pij = pi + pj
+        _t1 = 2 * d_p[d_idx] / (d_rho[d_idx]**2)
+        if d_p[d_idx] < 0.:
+            _t1 = 0.
 
-        tmp = -s_m_fsi[s_idx] * pij
-
-        d_au[d_idx] += tmp * DWIJ[0]
-        d_av[d_idx] += tmp * DWIJ[1]
-        d_aw[d_idx] += tmp * DWIJ[2]
+        d_au[d_idx] -= psi * _t1 * DWIJ[0]
+        d_av[d_idx] -= psi * _t1 * DWIJ[1]
+        d_aw[d_idx] -= psi * _t1 * DWIJ[2]
 
 
 class ForceOnRigidBodyDueToFluid(Equation):
-    def loop(self, d_idx, s_idx, d_m, d_m_fsi, d_rho_fsi, d_p_fsi, d_fx, d_fy, d_fz,
-             s_m, s_rho, s_p, DWIJ):
-        rhoi = d_rho_fsi[d_idx]
-        rhoj = s_rho[s_idx]
-        pi = d_p_fsi[d_idx]
-        pj = s_p[s_idx]
+    def loop(self, d_idx, d_rho,
+             s_idx, d_fx, d_fy, d_fz, DWIJ, d_m, d_m_fsi,
+             s_m, s_p, s_rho):
 
-        pi = pi / (rhoi * rhoi)
-        pj = pj / (rhoj * rhoj)
+        psi = s_m[s_idx]
 
-        pij = pi + pj
-
-        tmp = -s_m[s_idx] * pij
+        _t1 = 2 * s_p[s_idx] / (s_rho[s_idx]**2)
+        if s_p[s_idx] < 0.:
+            _t1 = 0.
 
         scale = d_m_fsi[d_idx] / d_m[d_idx]
 
-        d_fx[d_idx] += tmp * DWIJ[0] * scale
-        d_fy[d_idx] += tmp * DWIJ[1] * scale
-        d_fz[d_idx] += tmp * DWIJ[2] * scale
+        d_fx[d_idx] -= scale * psi * _t1 * DWIJ[0]
+        d_fy[d_idx] -= scale * psi * _t1 * DWIJ[1]
+        d_fz[d_idx] -= scale * psi * _t1 * DWIJ[2]
 
 
 class WCSPHRigidBodyScheme(Scheme):
