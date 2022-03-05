@@ -103,12 +103,20 @@ class SummationDensityOnFluidDueToRigidBody(Equation):
         d_rho[d_idx] += s_m_fsi[s_idx]*WIJ
 
 
+class SummationDensityOnRigidBodyDueToRigidBody(Equation):
+    def initialize(self, d_idx, d_rho_fsi):
+        d_rho_fsi[d_idx] = 0.0
+
+    def loop(self, d_idx, s_idx, d_rho_fsi, s_m_fsi, WIJ):
+        d_rho_fsi[d_idx] += s_m_fsi[s_idx]*WIJ
+
+
 class SummationDensityOnRigidBodyDueToFluid(Equation):
     def initialize(self, d_idx, d_rho_fsi):
-        d_rho_fluid[d_idx] = 0.0
+        d_rho_fsi[d_idx] = 0.0
 
-    def loop(self, d_idx, s_idx, d_rho, s_m_fsi, WIJ):
-        d_rho_fsi[d_idx] += s_m_fsi[s_idx]*WIJ
+    def loop(self, d_idx, s_idx, d_rho_fsi, s_m, WIJ):
+        d_rho_fsi[d_idx] += s_m[s_idx]*WIJ
 
 
 class EDACStep(IntegratorStep):
@@ -262,6 +270,41 @@ class SolidWallPressureBC(Equation):
         # extrapolated pressure at the ghost particle
         if d_wij[d_idx] > 1e-14:
             d_p[d_idx] /= d_wij[d_idx]
+
+
+class SolidWallPressureBCRigidBody(Equation):
+    r"""Solid wall pressure boundary condition from Adami and Hu (transport
+    velocity formulation).
+
+    """
+    def __init__(self, dest, sources, c0, gx=0.0, gy=0.0, gz=0.0):
+        self.gx = gx
+        self.gy = gy
+        self.gz = gz
+        self.c0 = c0
+
+        super().__init__(dest, sources)
+
+    def initialize(self, d_idx, d_p_fsi):
+        d_p_fsi[d_idx] = 0.0
+
+    def loop(self, d_idx, s_idx, d_p_fsi, s_p, s_rho,
+             d_au, d_av, d_aw, WIJ, XIJ):
+
+        # numerator of Eq. (27) ax, ay and az are the prescribed wall
+        # accelerations which must be defined for the wall boundary
+        # particle
+        gdotxij = (self.gx - d_au[d_idx])*XIJ[0] + \
+            (self.gy - d_av[d_idx])*XIJ[1] + \
+            (self.gz - d_aw[d_idx])*XIJ[2]
+
+        d_p_fsi[d_idx] += s_p[s_idx]*WIJ + s_rho[s_idx]*gdotxij*WIJ
+
+    def post_loop(self, d_idx, d_wij, d_p_fsi, d_rho_fsi):
+        # extrapolated pressure at the ghost particle
+        if d_wij[d_idx] > 1e-14:
+            d_p_fsi[d_idx] /= d_wij[d_idx]
+            d_rho_fsi[d_idx] = d_p_fsi[d_idx] / self.c0**2. + 1
 
 
 class ClampWallPressure(Equation):
@@ -953,7 +996,7 @@ class EDACEquationRigidBodies(Equation):
         d_div[d_idx] = 0.0
         d_div_hat[d_idx] = 0.0
 
-    def loop(self, d_idx, d_rho, d_ap, d_p, s_idx, s_m, s_rho, s_p, d_div,
+    def loop(self, d_idx, d_rho, d_ap, d_p, s_idx, s_m_fsi, s_rho_fsi, s_p_fsi, d_div,
              d_u, d_v, d_w, d_uhat, d_vhat, d_h, s_h, d_what,
              DWJ, DWI, VIJ, XIJ, R2IJ, EPS):
         rhoi = d_rho[d_idx]
@@ -1015,6 +1058,48 @@ class UpdateGhostProps(Equation):
             idx = d_gid[d_idx]
             d_rho[d_idx] = d_rho[idx]
             d_p[d_idx] = d_p[idx]
+
+
+class ForceOnFluidDueToRigidBody(Equation):
+    def loop(self, d_idx, s_idx, d_rho, d_p, d_au, d_av, d_aw,
+             s_m_fsi, s_rho_fsi, s_p_fsi, DWIJ):
+        rhoi = d_rho[d_idx]
+        rhoj = s_rho_fsi[s_idx]
+        pi = d_p[d_idx]
+        pj = s_p_fsi[s_idx]
+
+        pi = pi / (rhoi * rhoi)
+        pj = pj / (rhoj * rhoj)
+
+        pij = pi + pj
+
+        tmp = -s_m_fsi[s_idx] * pij
+
+        d_au[d_idx] += tmp * DWIJ[0]
+        d_av[d_idx] += tmp * DWIJ[1]
+        d_aw[d_idx] += tmp * DWIJ[2]
+
+
+class ForceOnRigidBodyDueToFluid(Equation):
+    def loop(self, d_idx, s_idx, d_m, d_m_fsi, d_rho_fsi, d_p_fsi, d_fx, d_fy, d_fz,
+             s_m, s_rho, s_p, DWIJ):
+        rhoi = d_rho_fsi[d_idx]
+        rhoj = s_rho[s_idx]
+        pi = d_p_fsi[d_idx]
+        pj = s_p[s_idx]
+
+        pi = pi / (rhoi * rhoi)
+        pj = pj / (rhoj * rhoj)
+
+        pij = pi + pj
+
+        tmp = -s_m[s_idx] * pij
+
+        scale = d_m_fsi[d_idx] / d_m[d_idx]
+
+        d_fx[d_idx] += tmp * DWIJ[0] * scale
+        d_fy[d_idx] += tmp * DWIJ[1] * scale
+        d_fz[d_idx] += tmp * DWIJ[2] * scale
 
 
 class WCSPHRigidBodyScheme(Scheme):
@@ -1171,10 +1256,10 @@ class WCSPHRigidBodyScheme(Scheme):
             for name in iom_stepper:
                 steppers[name] = iom_stepper[name]
 
-        # step_cls = RK2StepRigidBody
-        # for body in self.rigid_bodies:
-        #     if body not in steppers:
-        #         steppers[body] = step_cls()
+        step_cls = RK2StepRigidBody
+        for body in self.rigid_bodies:
+            if body not in steppers:
+                steppers[body] = step_cls()
 
         integrator = cls(**steppers)
 
@@ -1336,17 +1421,17 @@ class WCSPHRigidBodyScheme(Scheme):
             group1.append(
                 SummationDensity(dest=fluid, sources=all),
             )
-            # # Add rigid body influence equation
-            # if len(self.rigid_bodies) > 0.:
-            #     group1.append(
-            #         SummationDensityOnFluidDueToRigidBody(
-            #             dest=fluid, sources=self.rigid_bodies),
-            #     )
+            # Add rigid body influence equation
+            if len(self.rigid_bodies) > 0.:
+                group1.append(
+                    SummationDensityOnFluidDueToRigidBody(
+                        dest=fluid, sources=self.rigid_bodies),
+                )
 
-        if self.solids:
+        if len(all_solids) > 0:
             for solid in all_solids:
                 group1.extend([
-                    SummationDensity(dest=solid, sources=all),
+                    SummationDensity(dest=solid, sources=fluids_with_io),
                     EvaluateNumberDensity(dest=solid, sources=fluids_with_io),
                 ])
             for solid in self.solids:
@@ -1362,9 +1447,19 @@ class WCSPHRigidBodyScheme(Scheme):
                     NoSlipAdvVelocityExtrapolation(
                         dest=solid, sources=fluids_with_io)
                 ])
+
+        # Compute density of Rigid body as fluid particles
+        if len(self.rigid_bodies) > 0:
+            for body in self.rigid_bodies:
+                group1.extend([
+                    # SummationDensityOnRigidBodyDueToFluid(dest=body, sources=fluids_with_io),
+                    # SummationDensityOnRigidBodyDueToRigidBody(dest=body,
+                    #                                           sources=self.rigid_bodies),
+                    EvaluateNumberDensity(dest=body, sources=fluids_with_io+self.rigid_bodies),
+                ])
         equations.append(Group(equations=group1))
 
-        if self.solids:
+        if len(all_solids) > 0:
             group_bc = []
             for solid in all_solids:
                 group_bc.append(
@@ -1375,25 +1470,18 @@ class WCSPHRigidBodyScheme(Scheme):
                 )
             equations.append(Group(equations=group_bc))
 
-        # # Compute density of Rigid body as fluid particles
-        # if len(self.rigid_bodies) > 0:
-        #     for body in self.rigid_bodies:
-        #         group1.extend([
-        #             SummationDensityOnRigidBodyDueToFluid(dest=body, sources=self.fluids),
-        #             EvaluateNumberDensity(dest=body, sources=self.fluids),
-        #         ])
-        # # also set the pressure of the rigid body when acting as fluid particle
-        # if len(self.rigid_bodies) > 0:
-        # if self.solids:
-        #     group_bc = []
-        #     for solid in all_solids:
-        #         group_bc.append(
-        #             SolidWallPressureBC(
-        #                 dest=solid, sources=fluids_with_io,
-        #                 gx=self.gx, gy=self.gy, gz=self.gz
-        #             )
-        #         )
-        #     equations.append(Group(equations=group_bc))
+        # also set the pressure of the rigid body when acting as fluid particle
+        if len(self.rigid_bodies) > 0:
+            group_bc = []
+            for body in self.rigid_bodies:
+                group_bc.append(
+                    SolidWallPressureBCRigidBody(
+                        dest=body, sources=fluids_with_io,
+                        c0=self.c0,
+                        gx=self.gx, gy=self.gy, gz=self.gz
+                    )
+                )
+            equations.append(Group(equations=group_bc))
 
         if self.has_ghosts:
             eq = []
@@ -1423,6 +1511,13 @@ class WCSPHRigidBodyScheme(Scheme):
                         dest=fluid, sources=fluids_with_io, nu=self.nu
                     )
                 )
+
+            # Add force due to rigid body on fluid
+            if len(self.rigid_bodies) > 0:
+                group2.append(
+                    ForceOnFluidDueToRigidBody(dest=fluid, sources=self.rigid_bodies),
+                )
+
             if len(self.solids) > 0 and self.nu > 0.0:
                 group2.append(
                     SolidWallNoSlipBC(
@@ -1447,18 +1542,13 @@ class WCSPHRigidBodyScheme(Scheme):
                         edac_alpha=self.edac_alpha
                 ))
 
-            if len(self.solids) > 0 and edac_nu > 0.0:
+            if len(self.rigid_bodies) > 0 and edac_nu > 0.0:
                 group2.append(
-                    EDACEquationSolids(
-                        dest=fluid, sources=all_solids, nu=edac_nu,
+                    EDACEquationRigidBodies(
+                        dest=fluid, sources=self.rigid_bodies, nu=edac_nu,
                         cs=self.c0, rho0=self.rho0,
                         edac_alpha=self.edac_alpha
                 ))
-            # # Add force due to rigid body on fluid
-            # # FIXME
-            # group1.append(
-            #     ForceDueToRigidBody(dest=fluid, sources=self.rigid_bodies),
-            # )
 
         equations.append(Group(equations=group2))
 
@@ -1467,5 +1557,35 @@ class WCSPHRigidBodyScheme(Scheme):
             io_eqns = iom.get_equations_post_compute_acceleration()
             for grp in io_eqns:
                 equations.append(grp)
+
+        # Add rigid body equations (Accelerations)
+        if len(self.rigid_bodies) > 0:
+            g5 = []
+            g6 = []
+            g7 = []
+            g8 = []
+
+            # Force due to fluid on rigid body
+            for body in self.rigid_bodies:
+                g5.append(BodyForce(
+                    dest=body, sources=None,
+                    gx=self.gx,
+                    gy=self.gy,
+                    gz=self.gz))
+
+                g5.append(ForceOnRigidBodyDueToFluid(
+                    dest=body, sources=fluids_with_io))
+
+                g5.append(RigidBodyCollision(
+                    dest=body, sources=all_solids+self.rigid_bodies))
+
+            equations.append(Group(g5))
+
+            for body in self.rigid_bodies:
+                g6.append(RigidBodyMoments(dest=body, sources=None))
+                g7.append(RigidBodyMotion(dest=body, sources=None))
+
+            equations.append(Group(g6))
+            equations.append(Group(g7))
 
         return equations

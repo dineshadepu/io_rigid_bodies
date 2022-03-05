@@ -210,13 +210,16 @@ class WindTunnel(Application):
         self.dc = 1.2  # diameter of cylinder
         self.nl = 10  # Number of layers for wall/inlet/outlet
 
+        # rigid body properties
+        self.rigid_body_rho = 2000
+
     def add_user_options(self, group):
         group.add_argument(
             "--re", action="store", type=float, dest="re", default=200,
             help="Reynolds number."
         )
         group.add_argument(
-            "--hdx", action="store", type=float, dest="hdx", default=1.2,
+            "--hdx", action="store", type=float, dest="hdx", default=1.0,
             help="Ratio h/dx."
         )
         group.add_argument(
@@ -282,7 +285,43 @@ class WindTunnel(Application):
             name='solid', x=x, y=y, m=volume*rho, rho=rho, h=h0
         )
         solid.add_constant('ds_min', dx)
+
+        # add rigid body collision properties
+        solid.add_property('rad_s')
+        solid.rad_s[:] = self.dx / 2.
         return solid
+
+    def _create_rigid_body(self):
+        from pysph.base.utils import (
+            get_particle_array_rigid_body)
+        dx = self.dx
+        h0 = self.hdx*dx
+
+        r = np.arange(dx/2, self.dc/2, dx)
+        x, y = np.array([]), np.array([])
+        for i in r:
+            spacing = dx
+            theta = np.linspace(0, 2*pi, int(2*pi*i/spacing), endpoint=False)
+            x = np.append(x,  i * cos(theta))
+            y = np.append(y,  i * sin(theta))
+
+        x += self.cxy[0]
+        volume = dx*dx
+        m = self.rigid_body_rho * volume
+        b_id = 0
+
+        body = get_particle_array_rigid_body(x=x, y=y, h=h0, m=m, rho=self.rigid_body_rho,
+                                             rad_s=self.dx/2., V=volume, cs=0.,
+                                             body_id=b_id, name="body")
+
+        # properties for rigid fluid coupling
+        for name in ['m_fsi', 'rho_fsi', 'p_fsi', 'wij', 'wij2']:
+            body.add_property(name)
+        body.m_fsi[:] = rho * volume
+        body.rho_fsi[:] = rho
+        body.p_fsi[:] = 0.
+
+        return body
 
     def _create_box(self):
         dx = self.dx
@@ -316,6 +355,9 @@ class WindTunnel(Application):
             wall.add_constant(const, 0.0)
         wall.yn[wall.y > 0.0] = 1.0
         wall.yn[wall.y <= 0.0] = -1.0
+        # add rigid body collision properties
+        wall.add_property('rad_s')
+        wall.rad_s[:] = self.dx / 2.
 
         # Create Inlet.
         inlet_cond = (x < dx/2)
@@ -348,19 +390,25 @@ class WindTunnel(Application):
     def create_particles(self):
         fluid, wall, inlet, outlet = self._create_box()
         solid = self._create_solid()
+        body = self._create_rigid_body()
 
-        particles = [fluid, inlet, outlet, solid, wall]
+        particles = [fluid, inlet, outlet, wall, body]
 
         # Do not use clean=True here. The properties not used in EDAC equations
         # but used in the create_equations below will be erased.
         self.scheme.setup_properties(particles, clean=False)
+
+        # Remove the fluid particles
+        G.remove_overlap_particles(
+            fluid, body, self.dx, dim=2
+        )
 
         return particles
 
     def create_scheme(self):
         nu = None
         s = WCSPHRigidBodyScheme(
-            ['fluid'], None, None, dim=2, rho0=rho, c0=c0,
+            ['fluid'], None, ['body'], dim=2, rho0=rho, c0=c0,
             nu=nu, h=None, inlet_outlet_manager=None,
             inviscid_solids=['wall'], cfl=None
         )
@@ -415,6 +463,8 @@ class WindTunnel(Application):
         )
         # Remove "SolidWallPressureBC" for "wall" particle only, as it is set
         # "EvaluatePropertyfromCharacteristics" equation.
+        # import pudb
+        # pudb.set_trace()
         # equations[1].equations.pop()
         equations = eq + equations
         return equations
@@ -507,4 +557,4 @@ class WindTunnel(Application):
 if __name__ == '__main__':
     app = WindTunnel()
     app.run()
-    app.post_process(app.info_filename)
+    # app.post_process(app.info_filename)
