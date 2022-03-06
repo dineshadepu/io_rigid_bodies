@@ -407,6 +407,12 @@ class WindTunnel(Application):
 
     def create_scheme(self):
         nu = None
+        # s = WCSPHRigidBodyScheme(
+        #     ['fluid'], None, None, dim=2, rho0=rho, c0=c0,
+        #     nu=nu, h=None, inlet_outlet_manager=None,
+        #     inviscid_solids=['wall'], cfl=None
+        # )
+        # Rigid fluid coupling is busting the inlet outlet
         s = WCSPHRigidBodyScheme(
             ['fluid'], None, ['body'], dim=2, rho0=rho, c0=c0,
             nu=nu, h=None, inlet_outlet_manager=None,
@@ -441,17 +447,17 @@ class WindTunnel(Application):
                 ),
                 EvaluateNumberDensity(dest='inlet', sources=['fluid']),
                 ShepardInterpolateCharacteristics(dest='inlet', sources=['fluid']),
-                EvaluateNumberDensity(dest='wall', sources=['fluid']),
-                ShepardInterpolateCharacteristics(dest='wall', sources=['fluid']),
+                # EvaluateNumberDensity(dest='wall', sources=['fluid']),
+                # ShepardInterpolateCharacteristics(dest='wall', sources=['fluid']),
                 EvaluateNumberDensity(dest='outlet', sources=['fluid']),
                 ShepardInterpolateCharacteristics(dest='outlet', sources=['fluid']),
             ])
         )
         eq.append(Group(equations=[
-            EvaluatePropertyfromCharacteristics(
-                dest='wall', sources=None, c_ref=c0, rho_ref=rho,
-                u_ref=u_freestream, v_ref=0.0, p_ref=0.0
-            ),
+            # EvaluatePropertyfromCharacteristics(
+            #     dest='wall', sources=None, c_ref=c0, rho_ref=rho,
+            #     u_ref=u_freestream, v_ref=0.0, p_ref=0.0
+            # ),
             EvaluatePropertyfromCharacteristics(
                 dest='inlet', sources=None, c_ref=c0, rho_ref=rho,
                 u_ref=u_freestream, v_ref=0.0, p_ref=0.0
@@ -463,8 +469,6 @@ class WindTunnel(Application):
         )
         # Remove "SolidWallPressureBC" for "wall" particle only, as it is set
         # "EvaluatePropertyfromCharacteristics" equation.
-        # import pudb
-        # pudb.set_trace()
         # equations[1].equations.pop()
         equations = eq + equations
         return equations

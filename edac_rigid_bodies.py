@@ -33,7 +33,6 @@ from pysph.sph.rigid_body import (
     BodyForce, SummationDensityBoundary, RigidBodyCollision, RigidBodyMoments,
     RigidBodyMotion, AkinciRigidFluidCoupling, RK2StepRigidBody)
 
-
 EDAC_PROPS = (
     'ap', 'au', 'av', 'aw', 'ax', 'ay', 'az', 'x0', 'y0', 'z0', 'u0',
     'v0', 'w0', 'p0', 'V', 'vmag'
@@ -304,7 +303,6 @@ class SolidWallPressureBCRigidBody(Equation):
         # extrapolated pressure at the ghost particle
         if d_wij[d_idx] > 1e-14:
             d_p_fsi[d_idx] /= d_wij[d_idx]
-            d_rho_fsi[d_idx] = d_p_fsi[d_idx] / self.c0**2. + 1
 
 
 class ClampWallPressure(Equation):
@@ -1286,7 +1284,7 @@ class WCSPHRigidBodyScheme(Scheme):
             'uhat', 'vhat', 'what', 'ap',
             'auhat', 'avhat', 'awhat', 'V',
             'p0', 'u0', 'v0', 'w0', 'x0', 'y0', 'z0',
-            'pavg', 'nnbr'
+            'pavg', 'nnbr', 'cs'
         ])
         extra_props = TVF_FLUID_PROPS if self.use_tvf else EDAC_PROPS
 
@@ -1439,15 +1437,6 @@ class WCSPHRigidBodyScheme(Scheme):
                         dest=solid, sources=fluids_with_io)
                 ])
 
-        # Compute density of Rigid body as fluid particles
-        if len(self.rigid_bodies) > 0:
-            for body in self.rigid_bodies:
-                group1.extend([
-                    # SummationDensityOnRigidBodyDueToFluid(dest=body, sources=fluids_with_io),
-                    # SummationDensityOnRigidBodyDueToRigidBody(dest=body,
-                    #                                           sources=self.rigid_bodies),
-                    EvaluateNumberDensity(dest=body, sources=fluids_with_io+self.rigid_bodies),
-                ])
         equations.append(Group(equations=group1))
 
         if len(all_solids) > 0:
@@ -1456,19 +1445,6 @@ class WCSPHRigidBodyScheme(Scheme):
                 group_bc.append(
                     SolidWallPressureBC(
                         dest=solid, sources=fluids_with_io,
-                        gx=self.gx, gy=self.gy, gz=self.gz
-                    )
-                )
-            equations.append(Group(equations=group_bc))
-
-        # also set the pressure of the rigid body when acting as fluid particle
-        if len(self.rigid_bodies) > 0:
-            group_bc = []
-            for body in self.rigid_bodies:
-                group_bc.append(
-                    SolidWallPressureBCRigidBody(
-                        dest=body, sources=fluids_with_io,
-                        c0=self.c0,
                         gx=self.gx, gy=self.gy, gz=self.gz
                     )
                 )
@@ -1515,11 +1491,7 @@ class WCSPHRigidBodyScheme(Scheme):
                         dest=fluid, sources=self.solids, nu=self.nu
                     )
                 )
-            # group2.append(
-            #     MomentumEquationArtificialStress(
-            #         dest=fluid, sources=fluids_with_io
-            #     )
-            # )
+
             group2.append(
                 EDACEquation(
                     dest=fluid, sources=fluids_with_io, nu=edac_nu,
